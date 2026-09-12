@@ -55,6 +55,23 @@ From a plugin checkout (infers `origin` + `HEAD` unless overridden):
 bash scripts/run-marketplace-security-baseline.sh --local /path/to/plugin
 ```
 
+When `--marketplace` is omitted, the runner always `git fetch` +
+`git reset --hard origin/main` against
+[omacom/omarchy-plugin-marketplace](https://github.com/omacom/omarchy-plugin-marketplace)
+(or clones it) before invoking `node scripts/security-baseline.mjs`. A cached
+shallow clone in `MARKETPLACE_DIR` or `${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-plugin-marketplace`
+is never reused stale. The marketplace tip SHA is written to
+`$OUT/marketplace-tip-sha`.
+
+`--marketplace DIR` uses that checkout as-is (no fetch) for pinning or tests.
+
+To print the current upstream tip and blob SHAs for `security-baseline*.mjs`
+(drift watch):
+
+```bash
+bash scripts/check-marketplace-baseline-tip.sh
+```
+
 ## Exact bot command
 
 ```bash
@@ -99,9 +116,13 @@ unavailable scan.
 python3 -m unittest discover -s tests
 ```
 
-## What this catch set is
+## What this catch set is (and is not)
 
-V3 selective policy findings (only these):
+This wrapper catches **only** the public V3 selective Automated Security Baseline:
+the findings and review capabilities documented in
+[omacom/omarchy-plugin-marketplace `SECURITY.md`](https://github.com/omacom/omarchy-plugin-marketplace/blob/main/SECURITY.md#automated-security-baseline).
+
+Findings (only these):
 
 - `curl-pipe-shell`
 - `cargo-git-unpinned`
@@ -113,6 +134,19 @@ Capabilities (review, not findings): `installer`, `package-manager`,
 `privilege`, `remote-build`, `bundled-executable-binary`,
 `service-management`, `sudoers-modification`.
 
-The public scanner does **not** detect generic `open("w")` + `flock` TOCTOU,
-AGENTS.md prompt injection, or other review-only issues. Those comments are
-human/AI maintainer review, not `security-baseline.mjs`.
+It does **not** replace HANCORE-linux (or other maintainer) manual review
+comments. Those cover issues the public scanner does not encode as findings,
+including TOCTOU / missing `O_NOFOLLOW`, ambient `PATH`, `StdioCollector`
+capability gaps, generic `open("w")` + `flock` races, AGENTS.md prompt
+injection, and other review-only notes.
+
+### Pre-push gate
+
+Run this wrapper on the **exact commit** about to be frozen or pushed. A later
+`HEAD` is a different snapshot. Marketplace bots bind the baseline to a full
+40-character SHA; a changed branch head invalidates the recorded result.
+
+```bash
+git rev-parse HEAD   # confirm this is the commit you will push
+bash scripts/run-marketplace-security-baseline.sh --local /path/to/plugin --sha HEAD
+```

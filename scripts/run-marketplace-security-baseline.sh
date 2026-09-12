@@ -4,6 +4,9 @@
 #
 # This is a local wrapper. It does not edit marketplace issues and is not a
 # security audit. See README.md.
+#
+# When --marketplace is omitted, the cached omacom/omarchy-plugin-marketplace
+# checkout is always fetched and reset to origin/main before the scan.
 set -euo pipefail
 
 usage() {
@@ -16,11 +19,15 @@ Options:
   --sha SHA           Full 40-character commit SHA (or a git rev if --local)
   --plugin-id ID      Override plugin ID (default: root manifest.json "id")
   --out DIR           Write metadata, report, and JSON here
-  --marketplace DIR   Existing omacom/omarchy-plugin-marketplace checkout
+  --marketplace DIR   Existing checkout (used as-is; no fetch/reset)
   --local DIR         Read root manifest.json from this checkout
   --json-only         Print only the JSON outcome path on stdout
   --metadata-only     Write validation-metadata.json and exit 0
   -h, --help          Show this help
+
+When --marketplace is omitted, MARKETPLACE_DIR (or the XDG cache) is always
+git fetch + reset --hard origin/main (or cloned) so a stale shallow clone is
+never reused. The marketplace tip SHA is written to DIR/marketplace-tip-sha.
 
 Examples:
   scripts/run-marketplace-security-baseline.sh \
@@ -36,9 +43,11 @@ commit_sha=""
 plugin_id=""
 out_dir=""
 marketplace_dir="${MARKETPLACE_DIR:-}"
+marketplace_explicit=0
 local_dir=""
 json_only=0
 metadata_only=0
+MARKETPLACE_REMOTE="${MARKETPLACE_REMOTE:-https://github.com/omacom/omarchy-plugin-marketplace.git}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -46,7 +55,7 @@ while [[ $# -gt 0 ]]; do
     --sha) commit_sha="${2:-}"; shift 2 ;;
     --plugin-id) plugin_id="${2:-}"; shift 2 ;;
     --out) out_dir="${2:-}"; shift 2 ;;
-    --marketplace) marketplace_dir="${2:-}"; shift 2 ;;
+    --marketplace) marketplace_dir="${2:-}"; marketplace_explicit=1; shift 2 ;;
     --local) local_dir="${2:-}"; shift 2 ;;
     --json-only) json_only=1; shift ;;
     --metadata-only) metadata_only=1; shift ;;
@@ -143,16 +152,33 @@ if [[ "$metadata_only" -eq 1 ]]; then
   exit 0
 fi
 
-if [[ -z "$marketplace_dir" ]]; then
-  marketplace_dir="${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-plugin-marketplace"
-fi
-if [[ ! -f "$marketplace_dir/scripts/security-baseline.mjs" ]]; then
-  mkdir -p "$(dirname "$marketplace_dir")"
-  if [[ -d "$marketplace_dir/.git" ]]; then
-    git -C "$marketplace_dir" pull --ff-only --depth 1
+refresh_marketplace_cache() {
+  local dir="$1"
+  mkdir -p "$(dirname "$dir")"
+  if [[ -d "$dir/.git" ]]; then
+    git -C "$dir" remote set-url origin "$MARKETPLACE_REMOTE"
+    git -C "$dir" fetch --depth 1 origin main
+    git -C "$dir" reset --hard origin/main
   else
-    git clone --depth 1 https://github.com/omacom/omarchy-plugin-marketplace.git "$marketplace_dir"
+    rm -rf "$dir"
+    git clone --depth 1 --branch main "$MARKETPLACE_REMOTE" "$dir"
   fi
+}
+
+if [[ "$marketplace_explicit" -eq 0 ]]; then
+  marketplace_dir="${marketplace_dir:-${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-plugin-marketplace}"
+  refresh_marketplace_cache "$marketplace_dir"
+fi
+
+if [[ ! -f "$marketplace_dir/scripts/security-baseline.mjs" ]]; then
+  echo "Missing scripts/security-baseline.mjs in $marketplace_dir" >&2
+  exit 2
+fi
+
+marketplace_tip=""
+if [[ -d "$marketplace_dir/.git" ]]; then
+  marketplace_tip="$(git -C "$marketplace_dir" rev-parse HEAD)"
+  printf '%s\n' "$marketplace_tip" > "$out_dir/marketplace-tip-sha"
 fi
 
 report="$out_dir/security-baseline-report.md"
@@ -175,6 +201,9 @@ else
   echo "metadata: $out_dir/validation-metadata.json"
   echo "report:   $report"
   echo "json:     $json"
+  if [[ -n "$marketplace_tip" ]]; then
+    echo "marketplace-tip: $marketplace_tip"
+  fi
   echo "exit:     $status"
 fi
 exit "$status"
