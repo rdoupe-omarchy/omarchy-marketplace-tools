@@ -167,6 +167,61 @@ class SecurityBaselineRunnerTests(unittest.TestCase):
             self.assertEqual((out / "marketplace-tip-sha").read_text().strip(), v1)
             self.assertIn("fake-baseline v1", result.stdout)
 
+    def test_implicit_cache_rejects_existing_non_git_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            remote = root / "remote"
+            cache = root / "cache"
+            out = root / "out"
+            _init_git_repo(remote)
+            _write_fake_marketplace(remote, "v1")
+            cache.mkdir()
+            marker = cache / "do-not-delete.txt"
+            marker.write_text("keep me\n")
+            result = subprocess.run(
+                [
+                    "bash", str(RUNNER),
+                    "--local", str(FIXTURE),
+                    "--repo", "https://github.com/example/sample-plugin",
+                    "--sha", PLUGIN_SHA,
+                    "--out", str(out),
+                ],
+                capture_output=True,
+                text=True,
+                env=_runner_env(remote, cache),
+            )
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn("not a git checkout", result.stderr)
+            self.assertTrue(marker.is_file())
+            self.assertEqual(marker.read_text(), "keep me\n")
+            self.assertFalse((cache / ".git").exists())
+
+    def test_implicit_cache_clones_when_path_is_absent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            remote = root / "remote"
+            cache = root / "cache"
+            out = root / "out"
+            _init_git_repo(remote)
+            tip = _write_fake_marketplace(remote, "fresh")
+            result = subprocess.run(
+                [
+                    "bash", str(RUNNER),
+                    "--local", str(FIXTURE),
+                    "--repo", "https://github.com/example/sample-plugin",
+                    "--sha", PLUGIN_SHA,
+                    "--out", str(out),
+                ],
+                capture_output=True,
+                text=True,
+                env=_runner_env(remote, cache),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((cache / ".git").is_dir())
+            self.assertEqual(_git(cache, "rev-parse", "HEAD").stdout.strip(), tip)
+            self.assertEqual((out / "marketplace-tip-sha").read_text().strip(), tip)
+            self.assertIn("fake-baseline fresh", result.stdout)
+
 
 class MarketplaceBaselineTipTests(unittest.TestCase):
     def test_check_tip_prints_commit_and_blob_shas(self):
@@ -186,3 +241,21 @@ class MarketplaceBaselineTipTests(unittest.TestCase):
             self.assertIn(f"tip {tip}", result.stdout)
             self.assertIn(f"blob {blob_baseline} scripts/security-baseline.mjs", result.stdout)
             self.assertIn(f"blob {blob_policy} scripts/security-baseline-policy.mjs", result.stdout)
+
+    def test_check_tip_fails_when_required_baseline_script_is_missing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            remote = Path(directory) / "remote"
+            _init_git_repo(remote)
+            scripts = remote / "scripts"
+            scripts.mkdir(parents=True, exist_ok=True)
+            (scripts / "security-baseline.mjs").write_text("// missing policy sibling\n")
+            _git(remote, "add", "scripts/security-baseline.mjs")
+            _git(remote, "commit", "-m", "incomplete baseline")
+            result = subprocess.run(
+                ["bash", str(CHECK_TIP)],
+                capture_output=True,
+                text=True,
+                env=_runner_env(remote),
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("scripts/security-baseline-policy.mjs", result.stderr)

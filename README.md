@@ -60,8 +60,9 @@ When `--marketplace` is omitted, the runner always `git fetch` +
 [omacom/omarchy-plugin-marketplace](https://github.com/omacom/omarchy-plugin-marketplace)
 (or clones it) before invoking `node scripts/security-baseline.mjs`. A cached
 shallow clone in `MARKETPLACE_DIR` or `${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-plugin-marketplace`
-is never reused stale. The marketplace tip SHA is written to
-`$OUT/marketplace-tip-sha`.
+is never reused stale. If that implicit cache path already exists and is not a
+git checkout, the runner exits nonzero and does not delete it. The marketplace
+tip SHA is written to `$OUT/marketplace-tip-sha`.
 
 `--marketplace DIR` uses that checkout as-is (no fetch) for pinning or tests.
 

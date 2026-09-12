@@ -159,8 +159,11 @@ refresh_marketplace_cache() {
     git -C "$dir" remote set-url origin "$MARKETPLACE_REMOTE"
     git -C "$dir" fetch --depth 1 origin main
     git -C "$dir" reset --hard origin/main
+  elif [[ -e "$dir" ]]; then
+    echo "Refusing to replace $dir: path exists but is not a git checkout." >&2
+    echo "Point MARKETPLACE_DIR at a marketplace git clone, or remove the path so it can be cloned." >&2
+    exit 2
   else
-    rm -rf "$dir"
     git clone --depth 1 --branch main "$MARKETPLACE_REMOTE" "$dir"
   fi
 }
